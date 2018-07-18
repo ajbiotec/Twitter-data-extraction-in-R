@@ -1,0 +1,86 @@
+library(twitteR)
+library(purrr)
+library(dplyr)
+require("ROAuth")
+require("RCurl")
+library(plyr)
+library(stringr)
+library(ggplot2) 
+library(httr)
+
+pos.words = scan('C:/file location for positive word list.csv',what = 'character',comment.char=';')
+neg.words = scan('C:/file location for negative word list.csv',what = 'character',comment.char=';' )
+
+api_key<- "XXXXXXXXXXXXXXXXX"
+api_secret<- "XXXXXXXXXXXXXXXXXXXX"
+access_token<-"2257323656-XXXXXXXXXXXXXXXXX"
+access_token_secret<- "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+setup_twitter_oauth(api_key,api_secret,access_token,access_token_secret)
+###Nestle
+searchString <- "#data science"
+numberOfTweets <- 1000
+tweets <- searchTwitter(searchString, n = numberOfTweets, lang="en")
+tweetsDF <- twListToDF(tweets)
+
+x <- tweetsDF
+x$text <- enc2native(x$text)
+
+# Extract URLs
+url_pattern <- "http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA
+-F][0-9a-fA-F]))+"
+x$contentURL <- str_extract(x$text, url_pattern)
+
+# Clean content of text
+x$text <- gsub("^[[:space:]]*","",x$text) # Remove leading whitespaces
+x$text <- gsub("[[:space:]]*$","",x$text) # Remove trailing whitespaces
+x$text <- gsub(" +"," ",x$text) # Remove extra whitespaces
+x$text <- gsub("'", "%%", x$text) # Replacing apostrophes with %%
+x$text <- iconv(x$text, "latin1", "ASCII", sub="") # Remove emojis/dodgy unicode
+x$text <- gsub("<(.*)>", "", x$text) # Remove pesky Unicodes like <U+A>
+x$text <- gsub("\\ \\. ", " ", x$text) # Replace orphaned fullstops with space
+x$text <- gsub("  ", " ", x$text) # Replace double space with single space
+x$text <- gsub("%%", "\'", x$text) # Changing %% back to apostrophes
+x$text <- gsub("https(.*)*$", "", x$text) # remove tweet URL
+x$text <- gsub("\\n", "-", x$text) # replace line breaks with -
+x$text <- gsub("--", "-", x$text) # remove double - from double line breaks
+x$text <- gsub("&amp;", "&", x$text) # fix ampersand &
+x$text[x$text == " "] <- "<no text>"
+
+for (i in 1:nrow(x)) {
+  if (x$truncated[i] == TRUE) {
+    x$text[i] <- gsub("[[:space:]]*$","...",x$text[i])
+  }
+}
+
+# Remove unused columns
+cleanTweets <- x %>% select("text", "contentURL", "favorited", "favoriteCount",
+                            "created", "truncated", "id", "screenName",
+                            "retweetCount", "isRetweet", "retweeted")
+head(cleanTweets)
+
+for (j in 1:nrow(cleanTweets)) {
+  theTweet <- tolower(cleanTweets$text[j])
+  tweetWords <- str_split(theTweet, "\\s+")
+  words <- unlist(tweetWords)
+  posMatches <- match(words, pos.words)
+  negMatches <- match(words, neg.words)
+  posMatches <- !is.na(posMatches)
+  negMatches <- !is.na(negMatches)
+  score <- sum(posMatches) - sum(negMatches)
+  cleanTweets$sentimentScore[j] <- score
+}
+
+plotData <- cleanTweets[c("text", "sentimentScore", "favoriteCount")]
+xLabel <- paste("Sentiment Score.  Mean sentiment: ",
+                round(mean(cleanTweets$sentimentScore), 2), sep = "")
+yLabel <- paste("Number of Tweets (", nrow(cleanTweets),")", sep = "")
+graphTitle <- paste("Twitter Sentiment Analysis of ", searchString, sep = "")
+
+qplot(factor(sentimentScore), data=plotData,
+      geom="bar",
+      fill=factor(sentimentScore),
+      xlab = xLabel,
+      ylab = yLabel,
+      main = graphTitle) +
+  theme(legend.position="none")
